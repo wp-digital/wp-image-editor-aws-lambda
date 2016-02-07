@@ -1,0 +1,17 @@
+{
+    "name": "shtrihstr/wp-image-editor-aws-lambda",
+    "authors": [
+        {
+            "name": "Aleksandr Strikha",
+            "email": "alex@pingbull.no"
+        }
+    ],
+    "require": {
+        "php": ">=5.5.0",
+        "composer/installers": "~1.0",
+        "aws/aws-sdk-php": "^3.14"
+    },
+    "extra": {
+        "installer-name": "wp-image-editor-aws-lambda"
+    }
+}

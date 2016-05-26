@@ -270,15 +270,8 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
 
     protected function _run_lambda_async( $new_key )
     {
-        $args = [
-            'bucket' => AWS_LAMBDA_IMAGE_BUCKET,
-            'filename' => $this->_file_s3_key,
-            'new_filename' => $new_key,
-            'quality' => $this->get_quality(),
-            'operations' => $this->_operations,
-        ];
-
-        $function = defined( 'AWS_LAMBDA_IMAGE_FUNCTION' ) ? AWS_LAMBDA_IMAGE_FUNCTION : 'wordpress_image_processor-production';
+        $args = $this->_get_lambda_args( [ 'new_filename' => $new_key ] );
+        $function = $this->_get_lambda_function();
 
         return $this->_lambda_client->invokeAsync( [
             'FunctionName' => $function,
@@ -289,20 +282,31 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
 
     protected function _run_lambda( $new_key )
     {
-        $args = [
-            'bucket' => AWS_LAMBDA_IMAGE_BUCKET,
-            'filename' => $this->_file_s3_key,
-            'new_filename' => $new_key,
-            'quality' => $this->get_quality(),
-            'operations' => $this->_operations,
-        ];
-
-        $function = defined( 'AWS_LAMBDA_IMAGE_FUNCTION' ) ? AWS_LAMBDA_IMAGE_FUNCTION : 'wordpress_image_processor-production';
+        $args = $this->_get_lambda_args( [ 'new_filename' => $new_key ] );
+        $function = $this->_get_lambda_function();
 
         return $this->_lambda_client->invoke( [
             'FunctionName' => $function,
             'Payload' => json_encode( $args ),
         ] );
+    }
+
+    protected function _get_lambda_args( $args = [] )
+    {
+        $defaults = [
+            'bucket' => AWS_LAMBDA_IMAGE_BUCKET,
+            'filename' => $this->_file_s3_key,
+            'new_filename' => '',
+            'quality' => $this->get_quality(),
+            'operations' => $this->_operations,
+            'return' => 'bucket'
+        ];
+        return wp_parse_args( $args, $defaults );
+    }
+
+    protected function _get_lambda_function()
+    {
+        return defined( 'AWS_LAMBDA_IMAGE_FUNCTION' ) ? AWS_LAMBDA_IMAGE_FUNCTION : 'wordpress_image_processor-production';
     }
 
     /**
@@ -518,6 +522,26 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
      */
     public function stream( $mime_type = null )
     {
-        // TODO: Implement stream() method.
+        $ext = $this->get_extension( $mime_type );
+        list( $filename, $extension, $mime_type ) = $this->get_output_format( "stream.{$ext}", $mime_type );
+
+        $args = $this->_get_lambda_args( [ 'new_filename' => $filename, 'return' => 'stream' ] );
+        $function = $this->_get_lambda_function();
+
+        $result = $this->_lambda_client->invoke( [
+            'FunctionName' => $function,
+            'Payload' => json_encode( $args ),
+            'InvocationType' => 'RequestResponse'
+        ] );
+
+        if( $result['StatusCode'] < 200 && $result['StatusCode'] >= 300 ) {
+            return new WP_Error( 'image_stream_error', $result['FunctionError'] );
+        }
+
+        $base64_data = $result['Payload']->getContents();
+        header( "Content-Type: $mime_type" );
+        print base64_decode( $base64_data );
+
+        return true;
     }
 }

@@ -1,9 +1,11 @@
 {
     "name": "shtrihstr/wp-image-editor-aws-lambda",
+    "type": "wordpress-muplugin",
+    "keywords": ["wordpress", "plugins"],
     "authors": [
         {
-            "name": "Aleksandr Strikha",
-            "email": "alex@pingbull.no"
+            "name": "Oleksandr Strikha",
+            "email": "alex@strikha.com"
         }
     ],
     "require": {

@@ -199,19 +199,24 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
 
     protected function _filename_to_key( $filename )
     {
+        $prefix = "";
+        if ( defined( 'AWS_LAMBDA_IMAGE_PREFIX' ) ) {
+            $prefix = trim( AWS_LAMBDA_IMAGE_PREFIX );
+        }
+
         if( preg_match( '|^https?://|', $filename ) ) {
             $baseurl = $this->_get_s3fs_base_url();
             if( parse_url( $baseurl, PHP_URL_HOST ) !== parse_url( $filename, PHP_URL_HOST ) ) {
                 return false;
             }
-            return mb_substr( preg_replace( '|^https?://|', '',  $filename ), mb_strlen( preg_replace( '|^https?://|', '',  $baseurl ) ) + 1 );
+            return $prefix . mb_substr( preg_replace( '|^https?://|', '',  $filename ), mb_strlen( preg_replace( '|^https?://|', '',  $baseurl ) ) + 1 );
         }
         else {
             $basedir = $this->_get_s3fs_base_dir();
             if( 0 !== mb_strpos( $filename, $basedir ) ) {
                 return false;
             }
-            return mb_substr( $filename, mb_strlen( $basedir ) + 1 );
+            return $prefix . mb_substr( $filename, mb_strlen( $basedir ) + 1 );
         }
     }
 

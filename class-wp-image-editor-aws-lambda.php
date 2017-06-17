@@ -141,8 +141,6 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
 
         $promise = $this->_run_lambda_async( $new_key );
 
-        $this->_operations = [];
-
         return [
             'promise' => $promise,
             'meta' => [
@@ -177,8 +175,6 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
         if( $result['StatusCode'] < 200 && $result['StatusCode'] >= 300 ) {
             return new WP_Error( 'image_save_error', $result['FunctionError'] );
         }
-
-        $this->_operations = [];
 
         // Set correct file permissions
         //$stat = stat( dirname( $filename ) );

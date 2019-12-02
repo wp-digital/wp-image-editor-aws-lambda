@@ -2,51 +2,46 @@
 
 use Aws\Lambda\LambdaClient;
 
-class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
-
-    protected $_operations = [];
-
+/**
+ * Class WP_Image_Editor_AWS_Lambda
+ */
+class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
+{
     /**
-     * @var LambdaClient
+     * @var array
+     */
+    protected $_operations = [];
+    /**
+     * @var LambdaClient|null
      */
     protected $_lambda_client = null;
 
-    protected $_file_s3_key = false;
-
-    protected function _add_operation( $operation, $params )
-    {
-        $this->_operations[] = array_merge( [ 'action' => $operation ], $params );
-    }
-
     /**
      * Checks to see if current environment supports the editor chosen.
-     * Must be overridden in a sub-class.
-     *
-     * @since 3.5.0
      *
      * @static
      * @access public
-     * @abstract
      *
      * @param array $args
+     *
      * @return bool
      */
     public static function test( $args = [] )
     {
-        return defined( 'AWS_LAMBDA_IMAGE_BUCKET' ) && defined( 'AWS_LAMBDA_IMAGE_KEY' ) && defined( 'AWS_LAMBDA_IMAGE_SECRET' ) && defined( 'AWS_LAMBDA_IMAGE_REGION' );
+        return defined( 'AWS_LAMBDA_IMAGE_BUCKET' )
+            && defined( 'AWS_LAMBDA_IMAGE_KEY' )
+            && defined( 'AWS_LAMBDA_IMAGE_SECRET' )
+            && defined( 'AWS_LAMBDA_IMAGE_REGION' );
     }
 
     /**
      * Checks to see if editor supports the mime-type specified.
-     * Must be overridden in a sub-class.
-     *
-     * @since 3.5.0
      *
      * @static
      * @access public
-     * @abstract
      *
      * @param string $mime_type
+     *
      * @return bool
      */
     public static function supports_mime_type( $mime_type )
@@ -54,52 +49,59 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
         return in_array( $mime_type, [
             'image/gif',
             'image/jpeg',
+            'image/pjpeg',
             'image/png',
             'image/svg+xml',
             'image/vnd.wap.wbmp',
+            'image/webp',
         ] );
+    }
+
+    /**
+     * @param string $filename
+     *
+     * @return string|WP_Error
+     */
+    public static function filename_to_s3_key( $filename )
+    {
+        if ( false === ( $start = strpos( $filename, AWS_LAMBDA_IMAGE_BUCKET ) ) ) {
+            return new WP_Error( 'image_filename_error', __( 'Could not resolve image filename.' ), $filename );
+        }
+
+        return substr( $filename, $start + strlen( AWS_LAMBDA_IMAGE_BUCKET ) + 1 );
     }
 
     /**
      * Loads image from $this->file into editor.
      *
-     * @since 3.5.0
      * @access protected
      *
      * @return bool|WP_Error True if loaded; WP_Error on failure.
      */
     public function load()
     {
-        if ( ! is_file( $this->file ) && ! preg_match( '|^https?://|', $this->file ) ) {
-            return new WP_Error( 'error_loading_image', __('File doesn&#8217;t exist?'), $this->file );
+        if (
+            !is_file( $this->file ) && !preg_match( '|^https?://|', $this->file )
+            || false === strpos( $this->file, AWS_LAMBDA_IMAGE_BUCKET )
+        ) {
+            return new WP_Error( 'error_loading_image', __( 'File doesn&#8217;t exist?' ), $this->file );
         }
 
-        $this->_file_s3_key = $this->_filename_to_key( $this->file );
-        if( ! $this->_file_s3_key ) {
-            return new WP_Error( 'error_loading_image', __('File doesn&#8217;t exist on AWS S3?'), $this->file );
+        $updated_size = $this->update_size();
+
+        if ( is_wp_error( $updated_size ) ) {
+            return $updated_size;
         }
 
-        $this->_operations = [];
-
-        $size = @getimagesize( $this->file );
-
-        if( ! $size ) {
-            return new WP_Error( 'invalid_image', 'getimagesize() error', $this->file );
-        }
-
-        $this->update_size( $size[0], $size[1] );
-        $this->set_quality();
-
-        $this->mime_type = $size['mime'];
-
-        $this->_lambda_client = new LambdaClient([
-            'credentials' => array(
+        $this->_lambda_client = new LambdaClient( [
+            'credentials' => [
                 'key'    => AWS_LAMBDA_IMAGE_KEY,
                 'secret' => AWS_LAMBDA_IMAGE_SECRET,
-            ),
-            'region' => AWS_LAMBDA_IMAGE_REGION,
-            'version' => '2015-03-31',
-        ]);
+            ],
+            'region'      => AWS_LAMBDA_IMAGE_REGION,
+            'version'     => 'latest',
+        ] );
+        $this->_operations = [];
 
         return $this->set_quality();
     }
@@ -107,207 +109,209 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
     /**
      * Saves current image to file.
      *
-     * @since 3.5.0
      * @access public
      *
      * @param string $destfilename
      * @param string $mime_type
+     *
      * @return array|WP_Error {'path'=>string, 'file'=>string, 'width'=>int, 'height'=>int, 'mime-type'=>string}
      */
     public function save( $destfilename = null, $mime_type = null )
     {
         $saved = $this->_save( $destfilename, $mime_type );
 
-        if ( ! is_wp_error( $saved ) ) {
-            $this->file = $saved['meta']['path'];
-            $this->mime_type = $saved['meta']['mime-type'];
+        if ( !is_wp_error( $saved ) ) {
+            $this->file = $saved['path'];
+            $this->mime_type = $saved['mime-type'];
         }
 
         return $saved;
     }
 
+    /**
+     * Sets or updates current image size.
+     *
+     * @param int $width
+     * @param int $height
+     *
+     * @return true|WP_Error
+     */
+    protected function update_size( $width = null, $height = null )
+    {
+        if ( !$width || !$height ) {
+            $size = @getimagesize( $this->file );
 
-    protected function _save_async( $filename = null, $mime_type = null ) {
-        list( $filename, $extension, $mime_type ) = $this->get_output_format( $filename, $mime_type );
+            if ( !$size ) {
+                return new WP_Error( 'invalid_image', __( 'Could not read image size.' ), $this->file );
+            }
 
-        if ( ! $filename )
-            $filename = $this->generate_filename( null, null, $extension );
+            if ( !$width ) {
+                $width = $size[0];
+            }
 
-        $new_key = $this->_filename_to_key( $filename );
+            if ( !$height ) {
+                $height = $size[1];
+            }
 
-        if( ! $new_key ) {
-            return new WP_Error( 'image_save_error', __('Wrong file destination'), $filename );
+            $this->mime_type = $size['mime'];
         }
 
-        $promise = $this->_run_lambda_async( $new_key );
+        return parent::update_size( $width, $height );
+    }
+
+    /**
+     * @param string|null $filename
+     * @param string|null $mime_type
+     *
+     * @return array|WP_Error
+     */
+    protected function _save( $filename = null, $mime_type = null )
+    {
+        list( $filename, $extension, $mime_type, $s3_key ) = $this->_get_output_format( $filename, $mime_type );
+
+        if ( is_wp_error( $s3_key ) ) {
+            return $s3_key;
+        }
+
+        try {
+            $result = $this->_run_lambda( [
+                'new_filename' => $s3_key,
+            ] );
+        } catch ( Exception $exception ) {
+            return new WP_Error( 'image_save_error', $exception->getMessage(), $filename );
+        }
+
+        if ( $result['StatusCode'] < WP_Http::OK || $result['StatusCode'] >= WP_Http::MULTIPLE_CHOICES ) {
+            return new WP_Error( 'image_save_error', $result['FunctionError'], $filename );
+        }
+
+        return $this->_get_output( $filename, $mime_type );
+    }
+
+    /**
+     * @param string|null $filename
+     * @param string|null $mime_type
+     *
+     * @return array|WP_Error
+     */
+    protected function _save_async( $filename = null, $mime_type = null )
+    {
+        list( $filename, $extension, $mime_type, $s3_key ) = $this->_get_output_format( $filename, $mime_type );
+
+        if ( is_wp_error( $s3_key ) ) {
+            return $s3_key;
+        }
+
+        $promise = $this->_run_lambda_async( [
+            'new_filename' => $s3_key,
+        ] );
 
         return [
-            'promise' => $promise,
-            'meta' => [
-                'path'      => $filename,
-                'file'      => wp_basename( apply_filters( 'image_make_intermediate_size', $filename ) ),
-                'width'     => $this->size['width'],
-                'height'    => $this->size['height'],
-                'mime-type' => $mime_type,
-            ],
+            $promise,
+            $this->_get_output( $filename, $mime_type ),
         ];
     }
 
     /**
+     * @param string|null $filename
+     * @param string|null $mime_type
      *
-     * @param string $filename
-     * @param string $mime_type
-     * @return array|WP_Error
+     * @return array
      */
-    protected function _save( $filename = null, $mime_type = null ) {
+    protected function _get_output_format( $filename, $mime_type )
+    {
         list( $filename, $extension, $mime_type ) = $this->get_output_format( $filename, $mime_type );
 
-        if ( ! $filename )
+        if ( !$filename ) {
             $filename = $this->generate_filename( null, null, $extension );
-
-        $new_key = $this->_filename_to_key( $filename );
-
-        if( ! $new_key ) {
-            return new WP_Error( 'image_save_error', __('Wrong file destination'), $filename );
         }
 
-        $result = $this->_run_lambda( $new_key );
-        if( $result['StatusCode'] < 200 && $result['StatusCode'] >= 300 ) {
-            return new WP_Error( 'image_save_error', $result['FunctionError'] );
-        }
+        $s3_key = static::filename_to_s3_key( $filename );
 
-        // Set correct file permissions
-        //$stat = stat( dirname( $filename ) );
-        //$perms = $stat['mode'] & 0000666; //same permissions as parent folder, strip off the executable bits
-        //@ chmod( $filename, $perms );
+        return [
+            $filename,
+            $extension,
+            $mime_type,
+            $s3_key,
+        ];
+    }
 
+    /**
+     * @param string $filename
+     * @param string $mime_type
+     *
+     * @return array
+     */
+    protected function _get_output( $filename, $mime_type )
+    {
         /** This filter is documented in wp-includes/class-wp-image-editor-gd.php */
         return [
-            'meta' => [
-                'path'      => $filename,
-                'file'      => wp_basename( apply_filters( 'image_make_intermediate_size', $filename ) ),
-                'width'     => $this->size['width'],
-                'height'    => $this->size['height'],
-                'mime-type' => $mime_type,
-            ],
+            'path'      => $filename,
+            'file'      => wp_basename( apply_filters( 'image_make_intermediate_size', $filename ) ),
+            'width'     => $this->size['width'],
+            'height'    => $this->size['height'],
+            'mime-type' => $mime_type,
         ];
     }
 
-    protected function _filename_to_key( $filename )
+    /**
+     * @param array $args
+     *
+     * @return \Aws\Result
+     */
+    protected function _run_lambda( array $args )
     {
-        $prefix = "";
-        if ( defined( 'AWS_LAMBDA_IMAGE_PREFIX' ) ) {
-            $prefix = trim( AWS_LAMBDA_IMAGE_PREFIX );
-        }
-
-        if( preg_match( '|^https?://|', $filename ) ) {
-            $baseurl = $this->_get_s3fs_base_url();
-            if( parse_url( $baseurl, PHP_URL_HOST ) !== parse_url( $filename, PHP_URL_HOST ) ) {
-                return false;
-            }
-            return $prefix . mb_substr( preg_replace( '|^https?://|', '',  $filename ), mb_strlen( preg_replace( '|^https?://|', '',  $baseurl ) ) + 1 );
-        }
-        else {
-            $basedir = $this->_get_s3fs_base_dir();
-            if( 0 !== mb_strpos( $filename, $basedir ) ) {
-                return false;
-            }
-            return $prefix . mb_substr( $filename, mb_strlen( $basedir ) + 1 );
-        }
-    }
-
-    protected function _get_s3fs_base_dir()
-    {
-        if( defined( 'AWS_LAMBDA_IMAGE_S3FS_DIR' ) ) {
-            return rtrim( AWS_LAMBDA_IMAGE_S3FS_DIR, DIRECTORY_SEPARATOR );
-        }
-        $dir = $this->_wp_upload_dir();
-        return $dir['basedir'];
-    }
-
-    protected function _get_s3fs_base_url()
-    {
-        if( defined( 'AWS_LAMBDA_IMAGE_S3FS_URL' ) ) {
-            return rtrim( AWS_LAMBDA_IMAGE_S3FS_URL, '/' );
-        }
-        $dir = $this->_wp_upload_dir();
-        return $dir['baseurl'];
-    }
-
-    protected function _wp_upload_dir()
-    {
-        $siteurl = get_option( 'siteurl' );
-        $upload_path = trim( get_option( 'upload_path' ) );
-
-        if ( empty( $upload_path ) || 'wp-content/uploads' == $upload_path ) {
-            $dir = WP_CONTENT_DIR . '/uploads';
-        } elseif ( 0 !== strpos( $upload_path, ABSPATH ) ) {
-            // $dir is absolute, $upload_path is (maybe) relative to ABSPATH
-            $dir = path_join( ABSPATH, $upload_path );
-        } else {
-            $dir = $upload_path;
-        }
-
-        if ( !$url = get_option( 'upload_url_path' ) ) {
-            if ( empty($upload_path) || ( 'wp-content/uploads' == $upload_path ) || ( $upload_path == $dir ) )
-                $url = WP_CONTENT_URL . '/uploads';
-            else
-                $url = trailingslashit( $siteurl ) . $upload_path;
-        }
-
-        /*
-         * Honor the value of UPLOADS. This happens as long as ms-files rewriting is disabled.
-         * We also sometimes obey UPLOADS when rewriting is enabled -- see the next block.
-         */
-        if ( defined( 'UPLOADS' ) && ! ( is_multisite() && get_site_option( 'ms_files_rewriting' ) ) ) {
-            $dir = ABSPATH . UPLOADS;
-            $url = trailingslashit( $siteurl ) . UPLOADS;
-        }
-        return [
-            'baseurl' => $url,
-            'basedir' => $dir,
-        ];
-    }
-
-    protected function _run_lambda_async( $new_key )
-    {
-        $args = $this->_get_lambda_args( [ 'new_filename' => $new_key ] );
-        $function = $this->_get_lambda_function();
-
-        return $this->_lambda_client->invokeAsync( [
-            'FunctionName' => $function,
-            'InvokeArgs' => json_encode( $args ),
-            'Payload' => json_encode( $args ),
-        ] );
-    }
-
-    protected function _run_lambda( $new_key )
-    {
-        $args = $this->_get_lambda_args( [ 'new_filename' => $new_key ] );
-        $function = $this->_get_lambda_function();
+        $payload = json_encode( $this->_get_lambda_args( $args ) );
 
         return $this->_lambda_client->invoke( [
-            'FunctionName' => $function,
-            'Payload' => json_encode( $args ),
+            'FunctionName' => $this->_get_lambda_function(),
+            'Payload'      => $payload,
         ] );
     }
 
-    protected function _get_lambda_args( $args = [] )
+    /**
+     * @param array $args
+     *
+     * @return \GuzzleHttp\Promise\Promise
+     */
+    protected function _run_lambda_async( array $args )
     {
-        $defaults = [
-            'bucket' => AWS_LAMBDA_IMAGE_BUCKET,
-            'filename' => $this->_file_s3_key,
-            'new_filename' => '',
-            'quality' => $this->get_quality(),
-            'operations' => $this->_operations,
-            'return' => 'bucket'
-        ];
-        return wp_parse_args( $args, $defaults );
+        $payload = json_encode( $this->_get_lambda_args( $args ) );
+
+        return $this->_lambda_client->invokeAsync( [
+            'FunctionName' => $this->_get_lambda_function(),
+            'InvokeArgs'   => $payload,
+            'Payload'      => $payload,
+        ] );
     }
 
+    /**
+     * @return string
+     */
     protected function _get_lambda_function()
     {
-        return defined( 'AWS_LAMBDA_IMAGE_FUNCTION' ) ? AWS_LAMBDA_IMAGE_FUNCTION : 'wordpress_image_processor-production';
+        return defined( 'AWS_LAMBDA_IMAGE_FUNCTION' )
+            ? AWS_LAMBDA_IMAGE_FUNCTION
+            : 'wordpress_image_processor-production';
+    }
+
+    /**
+     * @param array $args
+     *
+     * @return array
+     */
+    protected function _get_lambda_args( $args = [] )
+    {
+        $s3_key = static::filename_to_s3_key( $this->file );
+
+        return wp_parse_args( $args, [
+            'bucket'       => AWS_LAMBDA_IMAGE_BUCKET,
+            'filename'     => !is_wp_error( $s3_key ) ? $s3_key : $this->file,
+            'new_filename' => '',
+            'quality'      => $this->get_quality(),
+            'operations'   => $this->_operations,
+            'return'       => 'bucket',
+        ] );
     }
 
     /**
@@ -317,22 +321,26 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
      * If one of the two is set to null, the resize will
      * maintain aspect ratio according to the provided dimension.
      *
-     * @since 3.5.0
      * @access public
      *
      * @param  int|null $max_w Image width.
      * @param  int|null $max_h Image height.
      * @param  bool $crop
+     *
      * @return bool|WP_Error
      */
     public function resize( $max_w, $max_h, $crop = false )
     {
-        if ( ( $this->size['width'] == $max_w ) && ( $this->size['height'] == $max_h ) )
+        if ( $this->size['width'] == $max_w && $this->size['height'] == $max_h ) {
             return true;
+        }
 
         $dims = image_resize_dimensions( $this->size['width'], $this->size['height'], $max_w, $max_h, $crop );
-        if ( ! $dims )
-            return new WP_Error( 'error_getting_dimensions', __('Could not calculate resized image dimensions') );
+
+        if ( !$dims ) {
+            return new WP_Error( 'error_getting_dimensions', __( 'Could not calculate resized image dimensions' ) );
+        }
+
         list( $dst_x, $dst_y, $src_x, $src_y, $dst_w, $dst_h, $src_w, $src_h ) = $dims;
 
         if ( $crop ) {
@@ -340,7 +348,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
         }
 
         $this->_add_operation( 'resize', [
-            'width' => $dst_w,
+            'width'  => $dst_w,
             'height' => $dst_h,
         ] );
 
@@ -350,19 +358,23 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
     /**
      * Resize multiple images from a single source.
      *
-     * @since 3.5.0
-     * @access public
-     *
      * @param array $sizes {
-     *     An array of image size arrays. Default sizes are 'small', 'medium', 'large'.
+     *     An array of image size arrays. Default sizes are 'small', 'medium', 'medium_large', 'large'.
      *
-     * @type array $size {
-     * @type int $width Image width.
-     * @type int $height Image height.
-     * @type bool $crop Optional. Whether to crop the image. Default false.
+     *     Either a height or width must be provided.
+     *     If one of the two is set to null, the resize will
+     *     maintain aspect ratio according to the provided dimension.
+     *
+     *     @type array $size {
+     *         Array of height, width values, and whether to crop.
+     *
+     *         @type int  $width  Image width. Optional if `$height` is specified.
+     *         @type int  $height Image height. Optional if `$width` is specified.
+     *         @type bool $crop   Optional. Whether to crop the image. Default false.
      *     }
      * }
-     * @return array An array of resized images metadata by size.
+     *
+     * @return array An array of resized images' metadata by size.
      */
     public function multi_resize( $sizes )
     {
@@ -373,57 +385,55 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
         $promises = [];
 
         foreach ( $sizes as $size => $size_data ) {
-            $this->_operations = $orig_operations;
+            $this->_operations = [];
 
-            if ( ! isset( $size_data['width'] ) && ! isset( $size_data['height'] ) ) {
+            if ( !isset( $size_data['width'] ) && !isset( $size_data['height'] ) ) {
                 continue;
             }
 
-            if ( ! isset( $size_data['width'] ) ) {
+            if ( !isset( $size_data['width'] ) ) {
                 $size_data['width'] = null;
             }
-            if ( ! isset( $size_data['height'] ) ) {
+            if ( !isset( $size_data['height'] ) ) {
                 $size_data['height'] = null;
             }
 
-            if ( ! isset( $size_data['crop'] ) ) {
+            if ( !isset( $size_data['crop'] ) ) {
                 $size_data['crop'] = false;
             }
 
             $this->resize( $size_data['width'], $size_data['height'], $size_data['crop'] );
-            $duplicate = ( ( $orig_size['width'] == $size_data['width'] ) && ( $orig_size['height'] == $size_data['height'] ) );
+            $duplicate = $orig_size['width'] == $size_data['width'] && $orig_size['height'] == $size_data['height'];
 
-            if ( ! $duplicate ) {
-
-                if( $first ) {
+            if ( !$duplicate ) {
+                if ( $first ) {
                     $resized = $this->_save();
                     $first = false;
 
-                    if ( ! is_wp_error( $resized ) && $resized ) {
-                        unset( $resized['meta']['path'] );
-                        $metadata[ $size ] = $resized['meta'];
+                    if ( !is_wp_error( $resized ) && $resized ) {
+                        unset( $resized['path'] );
+                        $metadata[ $size ] = $resized;
                     }
-                }
-                else {
+                } else {
                     $resized = $this->_save_async();
 
-                    if ( ! is_wp_error( $resized ) && $resized ) {
-                        $promises[] = $resized['promise'];
-                        unset( $resized['meta']['path'] );
-                        $metadata[ $size ] = $resized['meta'];
+                    if ( !is_wp_error( $resized ) && $resized ) {
+                        list( $promise, $resized ) = $resized;
+                        $promises[] = $promise;
+                        unset( $resized['path'] );
+                        $metadata[ $size ] = $resized;
                     }
                 }
-
             }
 
             $this->size = $orig_size;
         }
 
-        foreach( $promises as $promise ) {
+        $this->_operations = $orig_operations;
+
+        foreach ( $promises as $promise ) {
             $promise->wait();
         }
-
-        $this->_operations = $orig_operations;
 
         return $metadata;
     }
@@ -431,7 +441,6 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
     /**
      * Crops Image.
      *
-     * @since 3.5.0
      * @access public
      *
      * @param int $src_x The start x position to crop from.
@@ -441,6 +450,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
      * @param int $dst_w Optional. The destination width.
      * @param int $dst_h Optional. The destination height.
      * @param bool $src_abs Optional. If the source crop points are absolute.
+     *
      * @return bool|WP_Error
      */
     public function crop( $src_x, $src_y, $src_w, $src_h, $dst_w = null, $dst_h = null, $src_abs = false )
@@ -451,14 +461,13 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
         }
 
         $this->_add_operation( 'crop', [
-            'src_x' => $src_x,
-            'src_y' => $src_y,
-            'src_width' => $src_w,
-            'src_height' => $src_h,
-            'destination_width' => $dst_w,
+            'src_x'              => $src_x,
+            'src_y'              => $src_y,
+            'src_width'          => $src_w,
+            'src_height'         => $src_h,
+            'destination_width'  => $dst_w,
             'destination_height' => $dst_h,
         ] );
-
 
         $new_width = $dst_w ? $dst_w : $src_w;
         $new_height = $dst_h ? $dst_h : $src_h;
@@ -469,7 +478,6 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
     /**
      * Rotates current image counter-clockwise by $angle.
      *
-     * @since 3.5.0
      * @access public
      *
      * @param float $angle
@@ -481,44 +489,55 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
             'angle' => $angle,
         ] );
 
-        if( absint( $angle ) % 180 === 0 ) {
+        if ( absint( $angle ) % 180 === 0 ) {
             return true;
-        }
-        elseif( absint( $angle ) % 90 === 0 ) {
+        } elseif ( absint( $angle ) % 90 === 0 ) {
             $old_size = $this->get_size();
+
             return $this->update_size( $old_size['height'], $old_size['width'] );
         }
 
-        //todo: calculate new size
         return true;
     }
 
     /**
      * Flips current image.
      *
-     * @since 3.5.0
      * @access public
      *
      * @param bool $horz Flip along Horizontal Axis
      * @param bool $vert Flip along Vertical Axis
+     *
      * @return bool|WP_Error
      */
     public function flip( $horz, $vert )
     {
         $this->_add_operation( 'flip', [
             'horizontal' => $horz,
-            'vertical' => $vert,
+            'vertical'   => $vert,
         ] );
+
         return true;
+    }
+
+    /**
+     * @param $operation
+     * @param $params
+     */
+    protected function _add_operation( $operation, $params )
+    {
+        $this->_operations[] = array_merge( [
+            'action' => $operation,
+        ], $params );
     }
 
     /**
      * Streams current image to browser.
      *
-     * @since 3.5.0
      * @access public
      *
      * @param string $mime_type
+     *
      * @return bool|WP_Error
      */
     public function stream( $mime_type = null )
@@ -526,20 +545,24 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor {
         $ext = $this->get_extension( $mime_type );
         list( $filename, $extension, $mime_type ) = $this->get_output_format( "stream.{$ext}", $mime_type );
 
-        $args = $this->_get_lambda_args( [ 'new_filename' => $filename, 'return' => 'stream' ] );
-        $function = $this->_get_lambda_function();
+        try {
+            $result = $this->_run_lambda( [
+                'new_filename' => $filename,
+                'return'       => 'stream',
+            ] );
+        } catch ( Exception $exception ) {
+            return new WP_Error( 'image_save_error', $exception->getMessage() );
+        }
 
-        $result = $this->_lambda_client->invoke( [
-            'FunctionName' => $function,
-            'Payload' => json_encode( $args ),
-            'InvocationType' => 'RequestResponse'
-        ] );
-
-        if( $result['StatusCode'] < 200 && $result['StatusCode'] >= 300 ) {
+        if ( $result['StatusCode'] < WP_Http::OK || $result['StatusCode'] >= WP_Http::MULTIPLE_CHOICES ) {
             return new WP_Error( 'image_stream_error', $result['FunctionError'] );
         }
 
-        $base64_data = $result['Payload']->getContents();
+        /**
+         * @var \GuzzleHttp\Psr7\Stream $payload
+         */
+        $payload = $result['Payload'];
+        $base64_data = $payload->getContents();
         header( "Content-Type: $mime_type" );
         print base64_decode( $base64_data );
 

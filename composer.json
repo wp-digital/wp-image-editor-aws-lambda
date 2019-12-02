@@ -1,19 +1,15 @@
 {
-    "name": "shtrihstr/wp-image-editor-aws-lambda",
-    "type": "wordpress-muplugin",
-    "keywords": ["wordpress", "plugins"],
-    "authors": [
-        {
-            "name": "Oleksandr Strikha",
-            "email": "alex@strikha.com"
-        }
-    ],
-    "require": {
-        "php": ">=5.5.0",
-        "composer/installers": "~1.0",
-        "aws/aws-sdk-php": "^3.14"
-    },
-    "extra": {
-        "installer-name": "wp-image-editor-aws-lambda"
-    }
+  "name": "innocode-digital/wp-image-editor-aws-lambda",
+  "type": "wordpress-muplugin",
+  "keywords": [
+    "wordpress",
+    "plugins"
+  ],
+  "license": "GPL-2.0+",
+  "require": {
+    "php": ">=5.5.0",
+    "composer/installers": "~1.0",
+    "aws/aws-sdk-php": "^3.14"
+  },
+  "description": ""
 }

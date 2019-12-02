@@ -13,7 +13,10 @@
 
 define( 'AWS_LAMBDA_IMAGE_EDITOR_VERSION', '1.0.0' );
 
-require_once __DIR__ . '/vendor/autoload.php';
+if ( file_exists( __DIR__ . '/vendor/autoload.php' ) ) {
+    require_once __DIR__ . '/vendor/autoload.php';
+}
+
 require_once ABSPATH . WPINC . '/class-wp-image-editor.php';
 require_once __DIR__ . '/class-wp-image-editor-aws-lambda.php';
 

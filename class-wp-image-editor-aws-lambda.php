@@ -64,11 +64,15 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      */
     public static function filename_to_s3_key( $filename )
     {
-        if ( false === ( $start = strpos( $filename, AWS_LAMBDA_IMAGE_BUCKET ) ) ) {
-            return $filename;
+        if ( false !== ( $start = strpos( $filename, AWS_LAMBDA_IMAGE_BUCKET ) ) ) {
+            return substr( $filename, $start + strlen( AWS_LAMBDA_IMAGE_BUCKET ) + 1 );
         }
 
-        return substr( $filename, $start + strlen( AWS_LAMBDA_IMAGE_BUCKET ) + 1 );
+        $upload_dir = wp_get_upload_dir();
+        $filename = str_replace( $upload_dir['basedir'], '', $filename );
+        $filename = ltrim( $filename, '/' );
+
+        return $filename;
     }
 
     /**
@@ -168,10 +172,6 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     protected function _save( $filename = null, $mime_type = null )
     {
         list( $filename, $extension, $mime_type, $s3_key ) = $this->_get_output_format( $filename, $mime_type );
-
-        if ( is_wp_error( $s3_key ) ) {
-            return $s3_key;
-        }
 
         try {
             $result = $this->_run_lambda( [

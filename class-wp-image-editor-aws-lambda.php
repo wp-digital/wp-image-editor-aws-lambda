@@ -60,12 +60,12 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     /**
      * @param string $filename
      *
-     * @return string|WP_Error
+     * @return string
      */
     public static function filename_to_s3_key( $filename )
     {
         if ( false === ( $start = strpos( $filename, AWS_LAMBDA_IMAGE_BUCKET ) ) ) {
-            return new WP_Error( 'image_filename_error', __( 'Could not resolve image filename.' ), $filename );
+            return $filename;
         }
 
         return substr( $filename, $start + strlen( AWS_LAMBDA_IMAGE_BUCKET ) + 1 );
@@ -226,13 +226,11 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             $filename = $this->generate_filename( null, null, $extension );
         }
 
-        $s3_key = static::filename_to_s3_key( $filename );
-
         return [
             $filename,
             $extension,
             $mime_type,
-            $s3_key,
+            static::filename_to_s3_key( $filename ),
         ];
     }
 
@@ -302,11 +300,9 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      */
     protected function _get_lambda_args( $args = [] )
     {
-        $s3_key = static::filename_to_s3_key( $this->file );
-
         return wp_parse_args( $args, [
             'bucket'       => AWS_LAMBDA_IMAGE_BUCKET,
-            'filename'     => !is_wp_error( $s3_key ) ? $s3_key : $this->file,
+            'filename'     => static::filename_to_s3_key( $this->file ),
             'new_filename' => '',
             'quality'      => $this->get_quality(),
             'operations'   => $this->_operations,

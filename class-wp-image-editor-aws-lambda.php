@@ -82,7 +82,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     {
         if (
             !is_file( $this->file ) && !preg_match( '|^https?://|', $this->file )
-            || false === strpos( $this->file, AWS_LAMBDA_IMAGE_BUCKET )
+            && false === strpos( $this->file, AWS_LAMBDA_IMAGE_BUCKET )
         ) {
             return new WP_Error( 'error_loading_image', __( 'File doesn&#8217;t exist?' ), $this->file );
         }

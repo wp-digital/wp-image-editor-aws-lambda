@@ -68,8 +68,8 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             return substr( $filename, $start + strlen( AWS_LAMBDA_IMAGE_BUCKET ) + 1 );
         }
 
-        $upload_dir = wp_get_upload_dir();
-        $filename = str_replace( $upload_dir['basedir'], '', $filename );
+        $uploads_dir = defined( 'UPLOADS' ) ? ABSPATH . UPLOADS : WP_CONTENT_DIR . '/uploads';
+        $filename = str_replace( $uploads_dir, '', $filename );
         $filename = ltrim( $filename, '/' );
 
         return $filename;

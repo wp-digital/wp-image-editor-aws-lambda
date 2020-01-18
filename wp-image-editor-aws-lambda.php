@@ -48,3 +48,7 @@ add_filter( 'wp_handle_upload', function( $args ) {
 
     return $args;
 }, 999 );
+
+add_filter( 'big_image_size_threshold', function () {
+    return false;
+} );

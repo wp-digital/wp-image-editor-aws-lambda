@@ -72,6 +72,10 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
         $filename = str_replace( $uploads_dir, '', $filename );
         $filename = ltrim( $filename, '/' );
 
+        if ( defined( 'AWS_LAMBDA_IMAGE_PREFIX' ) ) {
+            $filename = trim( AWS_LAMBDA_IMAGE_PREFIX, '/' ) . '/' . $filename;
+        }
+
         return $filename;
     }
 

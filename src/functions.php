@@ -14,6 +14,26 @@ function add_implementation( array $implementations ) : array {
 }
 
 /**
+ * @param array $file
+ *
+ * @return array
+ */
+function handle_upload( array $file ) : array {
+    $type = $file['type'];
+    $filename = $file['file'];
+
+    if ( 0 === mb_strpos( $type, 'image/' ) ) {
+        $editor = wp_get_image_editor( $filename );
+
+        if ( ! is_wp_error( $editor ) ) {
+            $editor->save( $filename );
+        }
+    }
+
+    return $file;
+}
+
+/**
  * @param array $meta
  * @param string $file
  *

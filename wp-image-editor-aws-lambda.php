@@ -22,5 +22,6 @@ require_once __DIR__ . '/src/class-wp-image-editor-aws-lambda.php';
 require_once __DIR__ . '/src/functions.php';
 
 add_filter( 'wp_image_editors', 'Innocode\ImageEditorAWSLambda\add_implementation' );
+add_filter( 'wp_handle_upload', 'Innocode\ImageEditorAWSLambda\handle_upload', 999 );
 add_filter( 'wp_read_image_metadata', 'Innocode\ImageEditorAWSLambda\read_image_metadata', 10, 3 );
 add_filter( 'plugins_loaded', 'Innocode\ImageEditorAWSLambda\remove_s3_uploads_hooks', 999 );

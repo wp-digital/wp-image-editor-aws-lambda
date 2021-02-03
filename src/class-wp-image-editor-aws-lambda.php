@@ -1,20 +1,27 @@
 <?php
 
 use Aws\Lambda\LambdaClient;
+use Aws\Result;
+use GuzzleHttp\Promise\Promise;
 
 /**
  * Class WP_Image_Editor_AWS_Lambda
  */
 class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
 {
+    const OPERATION_CROP = 'crop';
+    const OPERATION_FLIP = 'flip';
+    const OPERATION_RESIZE = 'resize';
+    const OPERATION_ROTATE = 'rotate';
+
     /**
      * @var array
      */
-    protected $_operations = [];
+    protected $operations = [];
     /**
      * @var LambdaClient|null
      */
-    protected $_lambda_client = null;
+    protected $lambda_client = null;
 
     /**
      * Checks to see if current environment supports the editor chosen.
@@ -52,7 +59,6 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             'image/pjpeg',
             'image/png',
             'image/svg+xml',
-            'image/vnd.wap.wbmp',
             'image/webp',
         ] );
     }
@@ -62,7 +68,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      *
      * @return string
      */
-    public static function filename_to_s3_key( $filename )
+    public static function filename_to_s3_key( string $filename ) : string
     {
         if ( false !== ( $start = strpos( $filename, AWS_LAMBDA_IMAGE_BUCKET ) ) ) {
             return substr( $filename, $start + strlen( AWS_LAMBDA_IMAGE_BUCKET ) + 1 );
@@ -89,8 +95,9 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     public function load()
     {
         if (
-            !is_file( $this->file ) && !preg_match( '|^https?://|', $this->file )
-            && false === strpos( $this->file, AWS_LAMBDA_IMAGE_BUCKET )
+            ! is_file( $this->file ) &&
+            ! preg_match( '|^https?://|', $this->file ) &&
+            false === strpos( $this->file, AWS_LAMBDA_IMAGE_BUCKET )
         ) {
             return new WP_Error( 'error_loading_image', __( 'File doesn&#8217;t exist?' ), $this->file );
         }
@@ -101,7 +108,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             return $updated_size;
         }
 
-        $this->_lambda_client = new LambdaClient( [
+        $this->lambda_client = new LambdaClient( [
             'credentials' => [
                 'key'    => AWS_LAMBDA_IMAGE_KEY,
                 'secret' => AWS_LAMBDA_IMAGE_SECRET,
@@ -109,7 +116,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             'region'      => AWS_LAMBDA_IMAGE_REGION,
             'version'     => 'latest',
         ] );
-        $this->_operations = [];
+        $this->operations = [];
 
         return $this->set_quality();
     }
@@ -126,9 +133,9 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      */
     public function save( $destfilename = null, $mime_type = null )
     {
-        $saved = $this->_save( $destfilename, $mime_type );
+        $saved = $this->run( $destfilename, $mime_type );
 
-        if ( !is_wp_error( $saved ) ) {
+        if ( ! is_wp_error( $saved ) ) {
             $this->file = $saved['path'];
             $this->mime_type = $saved['mime-type'];
         }
@@ -146,18 +153,18 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      */
     protected function update_size( $width = null, $height = null )
     {
-        if ( !$width || !$height ) {
+        if ( ! $width || ! $height ) {
             $size = @getimagesize( $this->file );
 
-            if ( !$size ) {
+            if ( ! $size ) {
                 return new WP_Error( 'invalid_image', __( 'Could not read image size.' ), $this->file );
             }
 
-            if ( !$width ) {
+            if ( ! $width ) {
                 $width = $size[0];
             }
 
-            if ( !$height ) {
+            if ( ! $height ) {
                 $height = $size[1];
             }
 
@@ -173,12 +180,12 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      *
      * @return array|WP_Error
      */
-    protected function _save( $filename = null, $mime_type = null )
+    protected function run( string $filename = null, string $mime_type = null )
     {
-        list( $filename, $extension, $mime_type, $s3_key ) = $this->_get_output_format( $filename, $mime_type );
+        list( $filename, $extension, $mime_type, $s3_key ) = $this->get_lambda_output_format( $filename, $mime_type );
 
         try {
-            $result = $this->_run_lambda( [
+            $result = $this->run_lambda( [
                 'new_filename' => $s3_key,
             ] );
         } catch ( Exception $exception ) {
@@ -189,7 +196,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             return new WP_Error( 'image_save_error', $result['FunctionError'], $filename );
         }
 
-        return $this->_get_output( $filename, $mime_type );
+        return $this->get_output( $filename, $mime_type );
     }
 
     /**
@@ -198,21 +205,21 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      *
      * @return array|WP_Error
      */
-    protected function _save_async( $filename = null, $mime_type = null )
+    protected function run_async( string $filename = null, string $mime_type = null )
     {
-        list( $filename, $extension, $mime_type, $s3_key ) = $this->_get_output_format( $filename, $mime_type );
+        list( $filename, $extension, $mime_type, $s3_key ) = $this->get_lambda_output_format( $filename, $mime_type );
 
         if ( is_wp_error( $s3_key ) ) {
             return $s3_key;
         }
 
-        $promise = $this->_run_lambda_async( [
+        $promise = $this->run_lambda_async( [
             'new_filename' => $s3_key,
         ] );
 
         return [
             $promise,
-            $this->_get_output( $filename, $mime_type ),
+            $this->get_output( $filename, $mime_type ),
         ];
     }
 
@@ -222,11 +229,11 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      *
      * @return array
      */
-    protected function _get_output_format( $filename, $mime_type )
+    protected function get_lambda_output_format( string $filename = null, string $mime_type = null ) : array
     {
         list( $filename, $extension, $mime_type ) = $this->get_output_format( $filename, $mime_type );
 
-        if ( !$filename ) {
+        if ( ! $filename ) {
             $filename = $this->generate_filename( null, null, $extension );
         }
 
@@ -244,7 +251,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      *
      * @return array
      */
-    protected function _get_output( $filename, $mime_type )
+    protected function get_output( string $filename, string $mime_type ) : array
     {
         /** This filter is documented in wp-includes/class-wp-image-editor-gd.php */
         return [
@@ -259,14 +266,14 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     /**
      * @param array $args
      *
-     * @return \Aws\Result
+     * @return Result
      */
-    protected function _run_lambda( array $args )
+    protected function run_lambda( array $args ) : Result
     {
-        $payload = json_encode( $this->_get_lambda_args( $args ) );
+        $payload = json_encode( $this->get_lambda_args( $args ) );
 
-        return $this->_lambda_client->invoke( [
-            'FunctionName' => $this->_get_lambda_function(),
+        return $this->lambda_client->invoke( [
+            'FunctionName' => $this->get_lambda_function(),
             'Payload'      => $payload,
         ] );
     }
@@ -274,14 +281,14 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     /**
      * @param array $args
      *
-     * @return \GuzzleHttp\Promise\Promise
+     * @return Promise
      */
-    protected function _run_lambda_async( array $args )
+    protected function run_lambda_async( array $args ) : Promise
     {
-        $payload = json_encode( $this->_get_lambda_args( $args ) );
+        $payload = json_encode( $this->get_lambda_args( $args ) );
 
-        return $this->_lambda_client->invokeAsync( [
-            'FunctionName' => $this->_get_lambda_function(),
+        return $this->lambda_client->invokeAsync( [
+            'FunctionName' => $this->get_lambda_function(),
             'InvokeArgs'   => $payload,
             'Payload'      => $payload,
         ] );
@@ -290,7 +297,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     /**
      * @return string
      */
-    protected function _get_lambda_function()
+    protected function get_lambda_function() : string
     {
         return defined( 'AWS_LAMBDA_IMAGE_FUNCTION' )
             ? AWS_LAMBDA_IMAGE_FUNCTION
@@ -302,14 +309,14 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      *
      * @return array
      */
-    protected function _get_lambda_args( $args = [] )
+    protected function get_lambda_args( array $args = [] ) : array
     {
         return wp_parse_args( $args, [
             'bucket'       => AWS_LAMBDA_IMAGE_BUCKET,
             'filename'     => static::filename_to_s3_key( $this->file ),
             'new_filename' => '',
             'quality'      => $this->get_quality(),
-            'operations'   => $this->_operations,
+            'operations'   => $this->operations,
             'return'       => 'bucket',
         ] );
     }
@@ -337,7 +344,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
 
         $dims = image_resize_dimensions( $this->size['width'], $this->size['height'], $max_w, $max_h, $crop );
 
-        if ( !$dims ) {
+        if ( ! $dims ) {
             return new WP_Error( 'error_getting_dimensions', __( 'Could not calculate resized image dimensions' ) );
         }
 
@@ -347,7 +354,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             return $this->crop( $src_x, $src_y, $src_w, $src_h, $dst_w, $dst_h );
         }
 
-        $this->_add_operation( 'resize', [
+        $this->add_operation( static::OPERATION_RESIZE, [
             'width'  => $dst_w,
             'height' => $dst_h,
         ] );
@@ -380,44 +387,44 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     {
         $metadata = [];
         $orig_size = $this->size;
-        $orig_operations = $this->_operations;
+        $orig_operations = $this->operations;
         $first = true;
         $promises = [];
 
         foreach ( $sizes as $size => $size_data ) {
-            $this->_operations = [];
+            $this->operations = [];
 
-            if ( !isset( $size_data['width'] ) && !isset( $size_data['height'] ) ) {
+            if ( ! isset( $size_data['width'] ) && ! isset( $size_data['height'] ) ) {
                 continue;
             }
 
-            if ( !isset( $size_data['width'] ) ) {
+            if ( ! isset( $size_data['width'] ) ) {
                 $size_data['width'] = null;
             }
-            if ( !isset( $size_data['height'] ) ) {
+            if ( ! isset( $size_data['height'] ) ) {
                 $size_data['height'] = null;
             }
 
-            if ( !isset( $size_data['crop'] ) ) {
+            if ( ! isset( $size_data['crop'] ) ) {
                 $size_data['crop'] = false;
             }
 
             $this->resize( $size_data['width'], $size_data['height'], $size_data['crop'] );
             $duplicate = $orig_size['width'] == $size_data['width'] && $orig_size['height'] == $size_data['height'];
 
-            if ( !$duplicate ) {
+            if ( ! $duplicate ) {
                 if ( $first ) {
-                    $resized = $this->_save();
+                    $resized = $this->run();
                     $first = false;
 
-                    if ( !is_wp_error( $resized ) && $resized ) {
+                    if ( ! is_wp_error( $resized ) && $resized ) {
                         unset( $resized['path'] );
                         $metadata[ $size ] = $resized;
                     }
                 } else {
-                    $resized = $this->_save_async();
+                    $resized = $this->run_async();
 
-                    if ( !is_wp_error( $resized ) && $resized ) {
+                    if ( ! is_wp_error( $resized ) && $resized ) {
                         list( $promise, $resized ) = $resized;
                         $promises[] = $promise;
                         unset( $resized['path'] );
@@ -429,7 +436,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             $this->size = $orig_size;
         }
 
-        $this->_operations = $orig_operations;
+        $this->operations = $orig_operations;
 
         foreach ( $promises as $promise ) {
             $promise->wait();
@@ -460,7 +467,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
             $src_h -= $src_y;
         }
 
-        $this->_add_operation( 'crop', [
+        $this->add_operation( static::OPERATION_CROP, [
             'src_x'              => $src_x,
             'src_y'              => $src_y,
             'src_width'          => $src_w,
@@ -485,7 +492,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      */
     public function rotate( $angle )
     {
-        $this->_add_operation( 'rotate', [
+        $this->add_operation( static::OPERATION_ROTATE, [
             'angle' => $angle,
         ] );
 
@@ -512,7 +519,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
      */
     public function flip( $horz, $vert )
     {
-        $this->_add_operation( 'flip', [
+        $this->add_operation( static::OPERATION_FLIP, [
             'horizontal' => $horz,
             'vertical'   => $vert,
         ] );
@@ -521,12 +528,12 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
     }
 
     /**
-     * @param $operation
-     * @param $params
+     * @param string $operation
+     * @param array  $params
      */
-    protected function _add_operation( $operation, $params )
+    protected function add_operation( string $operation, array $params )
     {
-        $this->_operations[] = array_merge( [
+        $this->operations[] = array_merge( [
             'action' => $operation,
         ], $params );
     }
@@ -546,7 +553,7 @@ class WP_Image_Editor_AWS_Lambda extends WP_Image_Editor
         list( $filename, $extension, $mime_type ) = $this->get_output_format( "stream.{$ext}", $mime_type );
 
         try {
-            $result = $this->_run_lambda( [
+            $result = $this->run_lambda( [
                 'new_filename' => $filename,
                 'return'       => 'stream',
             ] );

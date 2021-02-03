@@ -165,5 +165,9 @@ function sanitize_meta_value( string $key, string $value ) {
 }
 
 function remove_s3_uploads_hooks() {
+    if ( ! is_s3_uploads_enabled() ) {
+        return;
+    }
+
     remove_filter( 'wp_read_image_metadata', [ \S3_Uploads::get_instance(), 'wp_filter_read_image_metadata' ] );
 }

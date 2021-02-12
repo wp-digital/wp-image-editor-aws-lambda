@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AWS Lambda Image Editor
  * Description: Image Editor Class for Image Manipulation through Node.js modules and AWS Lambda.
- * Version: 2.0.1
+ * Version: 2.0.2
  * Author: Innocode
  * Author URI: https://innocode.com
  * Requires at least: 4.9.8
@@ -11,7 +11,7 @@
  * License URI: http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-define( 'AWS_LAMBDA_IMAGE_EDITOR_VERSION', '2.0.1' );
+define( 'AWS_LAMBDA_IMAGE_EDITOR_VERSION', '2.0.2' );
 
 if ( file_exists( __DIR__ . '/vendor/autoload.php' ) ) {
     require_once __DIR__ . '/vendor/autoload.php';

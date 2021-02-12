@@ -77,7 +77,9 @@ function read_image_metadata( array $meta, string $file ) : array {
  * @return bool
  */
 function is_s3_uploads_enabled() : bool {
-    return function_exists( 's3_uploads_enabled' ) && s3_uploads_enabled();
+    return defined( 'S3_UPLOADS_BUCKET' )
+        && function_exists( 's3_uploads_enabled' )
+        && s3_uploads_enabled();
 }
 
 /**

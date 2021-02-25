@@ -193,3 +193,26 @@ function remove_s3_uploads_hooks() {
 
     remove_filter( 'wp_read_image_metadata', [ \S3_Uploads::get_instance(), 'wp_filter_read_image_metadata' ] );
 }
+
+/**
+ * @param bool   $result
+ * @param string $path
+ * @return bool
+ */
+function webp_is_displayable( bool $result, string $path ) : bool {
+    if ( $result ) {
+        return $result;
+    }
+
+    $info = @getimagesize( $path );
+
+    if ( empty( $info ) ) {
+        return false;
+    }
+
+    if ( $info[2] !== IMAGETYPE_WEBP ) {
+        return false;
+    }
+
+    return true;
+}

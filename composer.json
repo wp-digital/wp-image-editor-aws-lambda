@@ -1,6 +1,6 @@
 {
   "name": "innocode-digital/wp-image-editor-aws-lambda",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "type": "wordpress-muplugin",
   "license": "GPL-2.0+",
   "keywords": [
